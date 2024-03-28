@@ -96,7 +96,7 @@ def main():
     parser.add_argument(
         "--num-heads",
         type=int,
-        default=4,
+        default=1,
         help="The number of heads/rank in transformer/mlp",
     )
     args = parser.parse_args()
@@ -269,21 +269,20 @@ def manual_training(model, dataset, args):
                 "val_acc": acc,
             }
         )
-
-        
-        
+      
         # Print some examples. Try to always include an example where the model is wrong.
         # But if the model is nearly perfect, don't bother, since we might search forever.
         model.print_examples(3, must_include_a_wrong=acc < args.acc_next)
         
         # Saving the model
-        torch.save(model.state_dict(), f"ckpts/len{dataset.number_length}_hsize64_flip_samedata_multcarry.ckpt")
+        torch.save(model.state_dict(), f"ckpts/{dataset.number_length}_{args.hidden_size}_{args.num_layers}_{args.num_heads}.ckpt")
         
         time_to_success[dataset.number_length] += 1
 
         print("Epochs per digit:", sorted(time_to_success.items()))
         if acc > args.acc_next:
-            break
+            if dataset.number_length == 5:
+                break
             print(f"Switching to number length {dataset.number_length+1}")
             dataset = make_dataset(args, number_length=dataset.number_length + 1)
             model.ds = dataset

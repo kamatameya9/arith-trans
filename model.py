@@ -5,33 +5,6 @@ from torch.utils.data import DataLoader, random_split
 import methods
 
 
-def sinusoidal_position_embeddings(seq_length, d_model):
-    """
-    Args:
-    - seq_length (int): The length of the sequence for which position embeddings are required.
-    - d_model (int): Dimension of the model (embedding size).
-
-    Returns:
-    - position_embeddings (Tensor): Sinusoidal position embeddings of shape (seq_length, d_model).
-    """
-
-    # Create a matrix of positions
-    position = torch.arange(seq_length).unsqueeze(1).float()  # shape: [seq_length, 1]
-
-    # Create a matrix of dimension indices
-    div_term = torch.exp(
-        torch.arange(0, d_model, 2).float()
-        * -(torch.log(torch.tensor(10000.0)) / d_model)
-    )  # shape: [d_model/2]
-
-    # Compute sinusoidal position embeddings
-    position_embeddings = torch.empty(seq_length, d_model)
-    position_embeddings[:, 0::2] = torch.sin(position * div_term)
-    position_embeddings[:, 1::2] = torch.cos(position * div_term)
-
-    return position_embeddings
-
-
 class AdditionModel(nn.Module):
     def __init__(
         self,
@@ -52,34 +25,7 @@ class AdditionModel(nn.Module):
         self.kind = kind
         self.num_layers = num_layers
         seq = self.ds.seq
-        if kind == "lstm":
-            self.model = nn.LSTM(
-                input_size=hidden_size,
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                dropout=dropout,
-                batch_first=True,
-                bidirectional=False,
-            )
-            print(self.model)
-        elif kind == "rnn":
-            self.model = nn.RNN(
-                input_size=hidden_size,
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                dropout=dropout,
-                # nonlinearity='relu',
-                batch_first=True,
-            )
-        elif kind == "gru":
-            self.model = nn.GRU(
-                input_size=hidden_size,
-                hidden_size=hidden_size,
-                num_layers=num_layers,
-                dropout=dropout,
-                batch_first=True,
-            )
-        elif kind == "transformer-lstm":
+        if kind == "transformer-lstm":
             self.base = nn.LSTM(
                 input_size=hidden_size,
                 hidden_size=hidden_size,
@@ -97,40 +43,6 @@ class AdditionModel(nn.Module):
                     batch_first=True,
                 ),
                 num_layers - 1,
-            )
-        elif kind == "attention-rnn":
-            self.model = nn.Sequential(
-                *[
-                    methods.RNNTransformerLayer(hidden_size, ffw_size, num_heads, 0, dropout)
-                    for i in range(num_layers)
-                ]
-            )
-        elif kind == "attention-rope":
-            self.model = nn.Sequential(
-                *[
-                    methods.RotaryEmbeddingTransformerLayer(
-                        hidden_size, ffw_size, num_heads, 0, dropout
-                    )
-                    for _ in range(num_layers)
-                ]
-            )
-        elif kind == "transformer-rope":
-            self.model = nn.Sequential(
-                *[
-                    methods.RotaryEmbeddingTransformerLayer(
-                        hidden_size, num_heads, ffw_size, dropout
-                    )
-                    for _ in range(num_layers)
-                ]
-            )
-        elif kind == "transformer-alibi":
-            self.model = nn.Sequential(
-                *[
-                    methods.AlibiTransformerLayer(
-                        hidden_size, num_heads, ffw_size, dropout, i
-                    )
-                    for i in range(num_layers)
-                ]
             )
         elif kind.startswith("transformer"):
             if kind == "transformer":
@@ -177,9 +89,7 @@ class AdditionModel(nn.Module):
         x = self.embedding(x)
         bs, seq, dim = x.shape
         # print(x.shape, "After embedding layer")
-        if self.kind in ("lstm", "rnn", "gru"):
-            x, _ = self.model(x)
-        elif self.kind.startswith("transformer"):
+        if self.kind.startswith("transformer"):
             if self.kind == "transformer":
                 if self.pos_emb.num_embeddings < seq:
                     print(
@@ -197,23 +107,12 @@ class AdditionModel(nn.Module):
                 positions = torch.arange(seq).unsqueeze(0).to(x.device)
                 emb = self.pos_emb(positions).to(x.device)
                 x = x + emb
-            elif self.kind == "transformer-sine":
-                emb = sinusoidal_position_embeddings(seq, dim).to(x.device)
-                x = x + emb
             elif self.kind == "transformer-lstm":
                 x, _ = self.base(x)
-            # My own transformers don't need a causal mask
-            if self.kind in (
-                "transformer-rope",
-                "transformer-alibi",
-                "transformer-rnn",
-            ):
-                x = self.model(x)
-            else:
-                attn_mask = nn.Transformer.generate_square_subsequent_mask(
-                    seq, x.device
-                )
-                x = self.model(x, mask=attn_mask, is_causal=True)
+            attn_mask = nn.Transformer.generate_square_subsequent_mask(
+                seq, x.device
+            )
+            x = self.model(x, mask=attn_mask, is_causal=True)
         elif self.kind == "hybrid":
             x, _ = self.model1(x)
             attn_mask = nn.Transformer.generate_square_subsequent_mask(seq, x.device)
@@ -340,16 +239,24 @@ class AdditionModelforProbing(AdditionModel):
     def forward(self, x):
         x = self.embedding(x)
         bs, seq, dim = x.shape
-
-        positions = torch.arange(seq).unsqueeze(0).to(x.device)
-        emb = self.pos_emb(positions).to(x.device)
-        x = x + emb
-        
-        attn_mask = nn.Transformer.generate_square_subsequent_mask(
-            seq, x.device
-        )
-        x = self.model(x, mask=attn_mask, is_causal=True)
-    
+        if self.kind.startswith("transformer"):
+            if self.kind == "transformer":
+                positions = torch.arange(seq).unsqueeze(0).to(x.device)
+                emb = self.pos_emb(positions).to(x.device)
+                x = x + emb
+            elif self.kind == "transformer-lstm":
+                x, _ = self.base(x)
+            attn_mask = nn.Transformer.generate_square_subsequent_mask(
+                seq, x.device
+            )
+            x = self.model(x, mask=attn_mask, is_causal=True)
+        elif self.kind == "hybrid":
+            x, _ = self.model1(x)
+            attn_mask = nn.Transformer.generate_square_subsequent_mask(seq, x.device)
+            x = self.model2(x, attn_mask, is_causal=True)
+        else:
+            x = self.model(x)
+            
         if self.ln:
             x = self.norm(x)  # [B, T, f]
         # logits = self.head(x)  # [B, T, # Words]

@@ -206,13 +206,13 @@ class BinaryOpDataset(Dataset):
         A = self.to_digits(a)
         B = self.to_digits(b)
         C = np.zeros((bs, self.number_length+1))
-        carry = np.zeros((bs, self.number_length, self.number_length+1))
+        carry = np.zeros((bs, self.number_length+1, self.number_length+1))
         Ap = np.where(A!=13, A, 0)
         Bp = np.where(B!=13, B, 0)
         for n in range(self.number_length):
             mask = Ap[:,n] + Bp[:,n] + C[:,n] >= self.base
             C[:,n+1][mask]=1
-            carry[:,n] = C
+            carry[:,n+1] = C
         return np.concatenate(
             [
                 np.full((bs, 1), self.start_token),
